@@ -38,6 +38,8 @@ export interface PieceDef {
   layoutMm: Partial<Record<Side, Vec>>;
   /** Draw the dashed centre line (symmetric pieces). */
   centreLine?: boolean;
+  /** Stitched on top of another piece (a patch pocket): top-left corner in that piece's frame (mm). */
+  placedOn?: { piece: string; at: Vec };
 }
 
 /** Two outline chords sewn together. a0 meets b0 and a1 meets b1 (vertex indices into each outline). */
@@ -63,6 +65,8 @@ export interface GarmentModel {
   cut: Localised;
   /** True for generated development garments that are never shipped in the catalogue. */
   dev?: boolean;
+  /** Flat-lay presentation of the procedural 3D garment (long sleeves angle further down). */
+  flatLay?: { sleeveDropDeg?: number };
   pieces: readonly PieceDef[];
   seams: readonly SeamDef[];
   presets: Partial<Record<PresetId, PresetDef>>;

@@ -15,6 +15,7 @@ import {
   cn,
 } from '@gs/ui';
 import { useDoc } from '../store/doc';
+import { AVAILABLE_GARMENTS } from '../store/garmentCatalog';
 import { look, useLook } from '../store/look';
 import { useWorkspace, type CameraPreset, type Quality } from '../store/workspace';
 // three.js is loaded only when the 3D view is shown (own chunk).
@@ -86,14 +87,17 @@ function GarmentPicker() {
   const [query, setQuery] = useState('');
   const [category, setCategory] = useState<Category>('all');
   const [layout, setLayout] = useState<'grid' | 'list'>('grid');
-  // Until the catalogue (GET /garments) has real models, the development tee is the only one.
-  const models = [garment];
+  const models = AVAILABLE_GARMENTS;
   const name = (g: typeof garment) => g.name.en ?? g.id;
   const shown = models.filter(
     (m) =>
       name(m).toLowerCase().includes(query.toLowerCase()) &&
-      (category === 'all' || (category === 'tees' && m.category === 'tee')),
+      (category === 'all' ||
+        (category === 'tees' && (m.category === 'tee' || m.category === 'tees')) ||
+        (category === 'hoodies' && m.category === 'hoodies')),
   );
+  const isSelected = (m: (typeof models)[number]) => m.id === garment.id || (garment.id === 'dev-tee' && m.id === 'tee-t12');
+  const activeThumbId = garment.id === 'dev-tee' ? 'tee-t12' : garment.id;
 
   return (
     <div className="absolute top-3 right-3 z-10" data-tour="garment">
@@ -101,12 +105,23 @@ function GarmentPicker() {
         open={open}
         onOpenChange={setOpen}
         align="end"
-        className="w-[400px] p-3"
+        className="w-[420px] p-3"
         trigger={
           <button type="button" aria-expanded={open} aria-haspopup="dialog">
             <Glass className="flex items-center gap-3 py-1.5 pr-3.5 pl-1.5 text-left">
-              <span className="flex size-10 items-center justify-center rounded-[11px] bg-accent/15 text-accent-fg [&_svg]:size-[22px]">
-                <Shirt />
+              <span className="flex size-10 items-center justify-center overflow-hidden rounded-[11px] bg-accent/15 text-accent-fg [&_svg]:size-[22px]">
+                <img
+                  src={`/garments/${activeThumbId}/thumb.webp`}
+                  alt={name(garment)}
+                  onError={(e) => {
+                    (e.currentTarget as HTMLImageElement).style.display = 'none';
+                    (e.currentTarget.nextElementSibling as HTMLElement | null)?.classList.remove('hidden');
+                  }}
+                  className="size-full object-contain p-0.5"
+                />
+                <span className="hidden">
+                  <Shirt />
+                </span>
               </span>
               <span className="flex flex-col leading-tight">
                 <b className="text-[15px] tracking-[0.45px] text-accent-fg uppercase">{name(garment)}</b>
@@ -152,7 +167,7 @@ function GarmentPicker() {
               aria-pressed={category === c}
               onClick={() => setCategory(c)}
               className={cn(
-                'h-7 rounded-full border px-3 text-[12.5px] font-medium',
+                'h-7 rounded-full border px-3 text-[12.5px] font-medium transition-colors',
                 category === c ? 'border-accent bg-accent text-accent-ink' : 'border-line-strong text-ink hover:bg-hover',
               )}
             >
@@ -160,29 +175,57 @@ function GarmentPicker() {
             </button>
           ))}
         </div>
-        <ul className={cn('m-0 list-none p-0', layout === 'grid' ? 'grid grid-cols-2 gap-2' : 'flex flex-col gap-1.5')}>
-          {shown.map((m) => (
-            <li key={m.id}>
-              <button
-                type="button"
-                aria-pressed={m.id === garment.id}
-                className="relative flex w-full flex-col items-start gap-0.5 rounded-xl border border-accent bg-accent-soft p-3 text-left"
-              >
-                <span className="absolute top-2 right-2 flex items-center gap-1">
-                  {m.dev && <Badge tone="warn">{t('garments.dev')}</Badge>}
-                  <Check className="size-4 text-accent-fg" />
-                </span>
-                <Shirt className="mb-2 size-10 text-accent-fg" />
-                <b className="text-[13px] text-ink uppercase">{name(m)}</b>
-                <small className="text-[11.5px] text-muted uppercase">{m.cut.en}</small>
-              </button>
-            </li>
-          ))}
+        <ul className={cn('m-0 max-h-[380px] overflow-y-auto list-none p-0 pr-1', layout === 'grid' ? 'grid grid-cols-2 gap-2' : 'flex flex-col gap-1.5')}>
+          {shown.map((m) => {
+            const active = isSelected(m);
+            return (
+              <li key={m.id}>
+                <button
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => {
+                    useDoc.getState().setGarment(m);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    'relative flex w-full rounded-xl border p-2.5 text-left transition-all',
+                    layout === 'grid' ? 'flex-col items-start gap-1' : 'flex-row items-center gap-3',
+                    active ? 'border-accent bg-accent-soft ring-1 ring-accent' : 'border-line-strong hover:border-accent/40 hover:bg-hover',
+                  )}
+                >
+                  <span className="absolute top-2 right-2 z-10 flex items-center gap-1">
+                    {m.dev && <Badge tone="warn">{t('garments.dev')}</Badge>}
+                    {active && <Check className="size-4 text-accent-fg" />}
+                  </span>
+                  <div
+                    className={cn(
+                      'flex items-center justify-center overflow-hidden rounded-lg bg-stage/40 shrink-0',
+                      layout === 'grid' ? 'h-24 w-full' : 'size-12',
+                    )}
+                  >
+                    <img
+                      src={`/garments/${m.id}/thumb.webp`}
+                      alt={name(m)}
+                      onError={(e) => {
+                        (e.currentTarget as HTMLImageElement).style.display = 'none';
+                        (e.currentTarget.nextElementSibling as HTMLElement | null)?.classList.remove('hidden');
+                      }}
+                      className="size-full object-contain p-1"
+                    />
+                    <span className="hidden text-accent-fg">
+                      <Shirt className={layout === 'grid' ? 'size-8' : 'size-5'} />
+                    </span>
+                  </div>
+                  <div className="flex flex-col min-w-0 flex-1 pr-6">
+                    <b className="mt-1 text-[13px] text-ink uppercase leading-snug truncate">{name(m)}</b>
+                    <small className="text-[11.5px] text-muted uppercase leading-none truncate">{m.cut.en}</small>
+                  </div>
+                </button>
+              </li>
+            );
+          })}
         </ul>
         {shown.length === 0 && <p className="m-0 text-xs text-muted">{t('garments.noMatch')}</p>}
-        <div className="mt-3">
-          <StageNotice stage={5}>{t('garments.catalogueNote')}</StageNotice>
-        </div>
         <p className="mt-3 mb-0 text-xs text-muted">{t('garments.count', { count: shown.length })}</p>
       </Popover>
     </div>

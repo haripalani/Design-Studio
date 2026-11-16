@@ -37,6 +37,10 @@ export function ViewerCanvas() {
     studio.setQuality(ws.quality);
     const first = useDoc.getState();
     studio.setGarment(first.garment, first.doc.look);
+    studio.ready?.().then(() => {
+      signatures.clear();
+      bake();
+    });
 
     // Textures: rebake only pieces whose inputs changed, at most every BAKE_INTERVAL_MS.
     const signatures = new Map<string, string>();
@@ -74,7 +78,16 @@ export function ViewerCanvas() {
     bake();
 
     let lastLook = first.doc.look;
+    let lastGarment = first.garment;
     const unsubDoc = useDoc.subscribe((s) => {
+      if (s.garment !== lastGarment) {
+        lastGarment = s.garment;
+        studio.setGarment(s.garment, s.doc.look);
+        studio.ready?.().then(() => {
+          signatures.clear();
+          bake();
+        });
+      }
       if (s.doc.look !== lastLook) {
         lastLook = s.doc.look;
         studio.setLook(s.doc.look);

@@ -4,7 +4,7 @@ import tailwindcss from '@tailwindcss/vite';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
-  server: { port: 5173, strictPort: true },
+  server: { port: 5173, strictPort: false },
   // Pre-bundle the libraries that load on demand (render/export). Otherwise the dev server discovers them
   // at first use, re-optimises and reloads every open page mid-session (it broke parallel E2E tests).
   optimizeDeps: { include: ['three', 'three-gpu-pathtracer', 'three-mesh-bvh', 'pdf-lib', 'mediabunny', 'fflate'] },

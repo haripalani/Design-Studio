@@ -33,6 +33,7 @@ export async function withStudio<T>(
   await ensureDocFonts(doc);
   const live = getStudio();
   if (live) {
+    await live.ready?.();
     if (pxPerMm !== PREVIEW_PX_PER_MM) bakeInto(live, garment, doc, pxPerMm);
     try {
       return await fn(live);
@@ -45,6 +46,7 @@ export async function withStudio<T>(
   try {
     studio.resize(800, 1000);
     studio.setGarment(garment, doc.look);
+    await studio.ready?.();
     bakeInto(studio, garment, doc, pxPerMm);
     return await fn(studio);
   } finally {

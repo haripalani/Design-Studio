@@ -6,6 +6,15 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import type { GarmentModel, Look, Side } from '@gs/core';
 import { buildGarmentGeometry, MM, type GarmentGeometry, type PanelGeometry } from './garmentMesh';
 import { goboShadowAlpha, knitNormalMap, LABEL_SIZES, labelTexture, MATERIAL_PROPS } from './procedural';
+import { buildBufferGeometry, loadRealGarment, type RealGarmentData } from './realModel';
+
+const REAL_MODEL_MAP: Record<string, string> = {
+  'dev-tee': 'tee-t12',
+  'tee-t12': 'tee-t12',
+  'tee-t5': 'tee-t5',
+  'tee-t12-body': 'tee-t12-body',
+  'hoodie-flat': 'hoodie-flat',
+};
 
 export type CameraPreset = 'front' | 'back' | 'side';
 /** Final-render framing: the current view, or a fixed preset framed for the output aspect. */
@@ -67,6 +76,19 @@ export class Studio {
   private garment: GarmentModel | null = null;
   private geometry: GarmentGeometry | null = null;
   private geomKey = '';
+  private realGarment: RealGarmentData | null = null;
+  private realShirtOuter: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial> | null = null;
+  private realShirtInner: THREE.Mesh<THREE.BufferGeometry, THREE.MeshPhysicalMaterial> | null = null;
+  private realHangerMesh: THREE.Mesh | null = null;
+  private realHookMesh: THREE.Mesh | null = null;
+  private realStitchMesh: THREE.Mesh | null = null;
+  private sheetCanvasOut: HTMLCanvasElement | OffscreenCanvas | null = null;
+  private sheetCanvasIn: HTMLCanvasElement | OffscreenCanvas | null = null;
+  private sheetTextureOut: THREE.CanvasTexture | null = null;
+  private sheetTextureIn: THREE.CanvasTexture | null = null;
+  private realNormalTexture: THREE.Texture | null = null;
+  private pieceSources = new Map<string, TexImageSource | OffscreenCanvas>();
+  private loadingModelPromise: Promise<void> | null = null;
   private garmentGroup = new THREE.Group();
   /** Key light, backdrop and gobo turn with the camera (turntable behaviour): any angle is lit like the front. */
   private rig = new THREE.Group();
@@ -167,12 +189,47 @@ export class Studio {
   setGarment(g: GarmentModel, look: Look): void {
     this.garment = g;
     this.geomKey = '';
+    this.clearGarment();
     this.setLook(look);
+
+    const realId = REAL_MODEL_MAP[g.id] ?? g.id;
+    this.loadingModelPromise = loadRealGarment(realId)
+      .then((real) => {
+        if (!real || this.disposed || this.garment?.id !== g.id) return;
+        this.buildRealGeometry(real, this.look ?? look);
+      })
+      .catch((err) => {
+        console.warn('Real garment load failed, using procedural geometry:', err);
+      });
+  }
+
+  async ready(): Promise<void> {
+    if (this.loadingModelPromise) {
+      await this.loadingModelPromise;
+    }
   }
 
   /** Upload a baked piece texture (outer = outside face, inner = inside face). */
   setPieceTexture(pieceId: string, side: Side, source: TexImageSource | OffscreenCanvas): void {
     const k = `${pieceId}|${side}`;
+    this.pieceSources.set(k, source);
+
+    if (this.realGarment) {
+      const box = this.realGarment.pieces.get(pieceId);
+      if (box) {
+        const canvas = side === 'inside' ? this.sheetCanvasIn : this.sheetCanvasOut;
+        const ctx = canvas?.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+        if (ctx) {
+          ctx.drawImage(source as CanvasImageSource, box.x, box.y, box.w, box.h);
+          if (side === 'inside' && this.sheetTextureIn) {
+            this.sheetTextureIn.needsUpdate = true;
+          } else if (this.sheetTextureOut) {
+            this.sheetTextureOut.needsUpdate = true;
+          }
+        }
+      }
+    }
+
     let tex = this.textures.get(k);
     const w = (source as { width: number }).width;
     const h = (source as { height: number }).height;
@@ -221,6 +278,7 @@ export class Studio {
 
   private rebuildGeometry(look: Look): void {
     if (!this.garment) return;
+    if (this.realGarment) return;
     const wrinkles = look.fabric.wrinkles ? look.fabric.wrinkleStrength : 0;
     const key = `${this.garment.id}@${this.garment.version}|${wrinkles.toFixed(2)}|${look.fabric.ao}`;
     if (key === this.geomKey) return;
@@ -288,6 +346,33 @@ export class Studio {
   }
 
   private clearGarment(): void {
+    if (this.realShirtOuter) {
+      this.realShirtOuter.geometry.dispose();
+      this.realShirtOuter.material.dispose();
+      this.realShirtOuter = null;
+    }
+    if (this.realShirtInner) {
+      this.realShirtInner.geometry.dispose();
+      this.realShirtInner.material.dispose();
+      this.realShirtInner = null;
+    }
+    if (this.realHangerMesh) {
+      this.realHangerMesh.geometry.dispose();
+      (this.realHangerMesh.material as THREE.Material).dispose();
+      this.realHangerMesh = null;
+    }
+    if (this.realHookMesh) {
+      this.realHookMesh.geometry.dispose();
+      (this.realHookMesh.material as THREE.Material).dispose();
+      this.realHookMesh = null;
+    }
+    if (this.realStitchMesh) {
+      this.realStitchMesh.geometry.dispose();
+      (this.realStitchMesh.material as THREE.Material).dispose();
+      this.realStitchMesh = null;
+    }
+    this.realGarment = null;
+
     for (const p of this.panels) {
       p.outer.geometry.dispose();
       p.inner.geometry.dispose();
@@ -303,6 +388,135 @@ export class Studio {
       this.rib = null;
     }
     this.garmentGroup.clear();
+  }
+
+  private fillSheets(color: string): void {
+    if (!this.realGarment) return;
+    const size = this.realGarment.size;
+    for (const canvas of [this.sheetCanvasOut, this.sheetCanvasIn]) {
+      if (!canvas) continue;
+      const ctx = canvas.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+      if (!ctx) continue;
+      ctx.fillStyle = color;
+      ctx.fillRect(0, 0, size, size);
+    }
+    for (const [key, source] of this.pieceSources.entries()) {
+      const [pieceId, side] = key.split('|') as [string, Side];
+      const box = this.realGarment.pieces.get(pieceId);
+      if (box) {
+        const c = side === 'inside' ? this.sheetCanvasIn : this.sheetCanvasOut;
+        const ctx = c?.getContext('2d') as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
+        if (ctx) {
+          ctx.drawImage(source as CanvasImageSource, box.x, box.y, box.w, box.h);
+        }
+      }
+    }
+  }
+
+  private buildRealGeometry(real: RealGarmentData, look: Look): void {
+    this.clearGarment();
+    this.realGarment = real;
+
+    const baseGeom = buildBufferGeometry(real.shirt, 0.01);
+    const innerGeom = baseGeom.clone();
+    const pos = innerGeom.getAttribute('position') as THREE.BufferAttribute;
+    const nrm = innerGeom.getAttribute('normal') as THREE.BufferAttribute;
+    for (let i = 0; i < pos.count; i++) {
+      pos.setXYZ(
+        i,
+        pos.getX(i) - nrm.getX(i) * INSIDE_OFFSET,
+        pos.getY(i) - nrm.getY(i) * INSIDE_OFFSET,
+        pos.getZ(i) - nrm.getZ(i) * INSIDE_OFFSET,
+      );
+    }
+
+    if (!this.sheetCanvasOut) {
+      this.sheetCanvasOut = createCanvas(real.size, real.size);
+    }
+    if (!this.sheetCanvasIn) {
+      this.sheetCanvasIn = createCanvas(real.size, real.size);
+    }
+
+    if (!this.sheetTextureOut) {
+      this.sheetTextureOut = new THREE.CanvasTexture(this.sheetCanvasOut as HTMLCanvasElement);
+      this.sheetTextureOut.colorSpace = THREE.SRGBColorSpace;
+      this.sheetTextureOut.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+    }
+    if (!this.sheetTextureIn) {
+      this.sheetTextureIn = new THREE.CanvasTexture(this.sheetCanvasIn as HTMLCanvasElement);
+      this.sheetTextureIn.colorSpace = THREE.SRGBColorSpace;
+    }
+
+    this.fillSheets(look.fabric.color);
+
+    if (real.normalMapUrl && !this.realNormalTexture) {
+      new THREE.TextureLoader().load(real.normalMapUrl, (tex) => {
+        tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+        tex.anisotropy = Math.min(8, this.renderer.capabilities.getMaxAnisotropy());
+        this.realNormalTexture = tex;
+        if (this.realShirtOuter) {
+          this.realShirtOuter.material.normalMap = tex;
+          this.realShirtOuter.material.needsUpdate = true;
+          this.requestRender();
+        }
+      });
+    }
+
+    const props = MATERIAL_PROPS[look.fabric.material];
+
+    const outerMat = new THREE.MeshPhysicalMaterial({
+      map: this.sheetTextureOut,
+      normalMap: this.realNormalTexture,
+      roughness: props?.roughness ?? 0.86,
+      sheen: (props?.sheen ?? 0.5) * 0.8,
+      sheenRoughness: 0.5,
+      sheenColor: new THREE.Color(look.fabric.color),
+      side: THREE.FrontSide,
+    });
+
+    const innerMat = new THREE.MeshPhysicalMaterial({
+      map: this.sheetTextureIn,
+      roughness: props?.roughness ?? 0.9,
+      sheen: (props?.sheen ?? 0.5) * 0.4,
+      sheenColor: new THREE.Color(look.fabric.color),
+      side: THREE.BackSide,
+    });
+
+    this.realShirtOuter = new THREE.Mesh(baseGeom, outerMat);
+    this.realShirtInner = new THREE.Mesh(innerGeom, innerMat);
+    for (const m of [this.realShirtOuter, this.realShirtInner]) {
+      m.castShadow = true;
+      m.receiveShadow = true;
+      this.garmentGroup.add(m);
+    }
+
+    if (real.hanger) {
+      const hg = buildBufferGeometry(real.hanger, 0.01);
+      const hm = new THREE.Mesh(hg, new THREE.MeshStandardMaterial({ color: 0xefefef, roughness: 0.45 }));
+      hm.castShadow = true;
+      hm.visible = look.scene.hanger;
+      this.realHangerMesh = hm;
+      this.garmentGroup.add(hm);
+    }
+    if (real.hook) {
+      const hkg = buildBufferGeometry(real.hook, 0.01);
+      const hkm = new THREE.Mesh(hkg, new THREE.MeshStandardMaterial({ color: 0x888888, roughness: 0.25, metalness: 0.85 }));
+      hkm.castShadow = true;
+      hkm.visible = look.scene.hanger;
+      this.realHookMesh = hkm;
+      this.garmentGroup.add(hkm);
+    }
+
+    if (real.stitch) {
+      const sg = buildBufferGeometry(real.stitch, 0.01);
+      const sm = new THREE.Mesh(sg, new THREE.MeshStandardMaterial({ color: look.fabric.color, roughness: 0.9 }));
+      sm.castShadow = true;
+      this.realStitchMesh = sm;
+      this.garmentGroup.add(sm);
+    }
+
+    this.frameGarment();
+    this.requestRender();
   }
 
   private buildHanger(): void {
@@ -342,6 +556,28 @@ export class Studio {
     this.rebuildGeometry(look);
     const f = look.fabric;
     const props = MATERIAL_PROPS[f.material];
+
+    if (this.realGarment) {
+      this.fillSheets(f.color);
+      if (this.sheetTextureOut) this.sheetTextureOut.needsUpdate = true;
+      if (this.sheetTextureIn) this.sheetTextureIn.needsUpdate = true;
+
+      if (this.realShirtOuter) {
+        this.realShirtOuter.material.roughness = props.roughness;
+        this.realShirtOuter.material.sheen = props.sheen * 0.8;
+        this.realShirtOuter.material.sheenColor.set(f.color);
+      }
+      if (this.realShirtInner) {
+        this.realShirtInner.material.roughness = props.roughness;
+        this.realShirtInner.material.sheen = props.sheen * 0.4;
+        this.realShirtInner.material.sheenColor.set(f.color);
+      }
+      if (this.realStitchMesh) {
+        (this.realStitchMesh.material as THREE.MeshStandardMaterial).color.set(f.color);
+      }
+      if (this.realHangerMesh) this.realHangerMesh.visible = look.scene.hanger;
+      if (this.realHookMesh) this.realHookMesh.visible = look.scene.hanger;
+    }
 
     let normal = this.normalTiles.get(f.material);
     if (!normal) {
@@ -454,6 +690,18 @@ export class Studio {
   /* ───────────── camera ───────────── */
 
   private frameGarment(): void {
+    if (this.realGarment) {
+      this.framing.distance = fitDistance({ w: 0.74, h: 0.76 }, this.camera.fov, this.camera.aspect);
+      this.framing.target.set(0, -0.02, 0);
+      if (!this.interacting && !this.anim) {
+        const dir = this.camera.position.clone().sub(this.controls.target).normalize();
+        if (dir.lengthSq() < 0.5) dir.set(0, 0, 1);
+        this.controls.target.copy(this.framing.target);
+        this.camera.position.copy(this.framing.target).addScaledVector(dir, this.framing.distance);
+        this.controls.update();
+      }
+      return;
+    }
     if (!this.geometry) return;
     this.framing.distance = fitDistance(this.geometry.size, this.camera.fov, this.camera.aspect);
     this.framing.target.set(0, 0.04, 0);
@@ -770,6 +1018,9 @@ export class Studio {
     this.disposed = true;
     cancelAnimationFrame(this.frame);
     this.clearGarment();
+    this.sheetTextureOut?.dispose();
+    this.sheetTextureIn?.dispose();
+    this.realNormalTexture?.dispose();
     this.textures.forEach((t) => t.dispose());
     this.normalTiles.forEach((t) => t.dispose());
     this.gobo.material.alphaMap?.dispose();

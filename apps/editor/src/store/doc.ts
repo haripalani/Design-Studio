@@ -46,6 +46,7 @@ interface DocState {
    * one undoable step, keeping its timestamp as-is.
    */
   replace: (doc: ProjectDoc, label: string) => void;
+  setGarment: (g: GarmentModel) => void;
 }
 
 function stamp(d: Draft<ProjectDoc>) {
@@ -156,6 +157,17 @@ export const useDoc = create<DocState>()((set, get) => ({
       selectedId: next.layers.some((l) => l.id === s.selectedId) ? s.selectedId : null,
     });
   },
+
+  setGarment: (garment) =>
+    set((s) => ({
+      garment,
+      doc: {
+        ...s.doc,
+        garment: { modelId: garment.id, modelVersion: garment.version },
+        updatedAt: new Date().toISOString(),
+      },
+      rev: s.rev + 1,
+    })),
 }));
 
 export function selectedLayer(s: Pick<DocState, 'doc' | 'selectedId'>): Layer | undefined {

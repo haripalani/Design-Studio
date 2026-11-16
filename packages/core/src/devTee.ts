@@ -5,7 +5,7 @@ import { bbox, cubic, signedArea, type Vec } from './geometry';
 import type { GarmentModel, PieceDef, SeamDef } from './garment';
 
 /** Builds a polyline while recording the indices of named vertices. */
-class Outline {
+export class Outline {
   pts: Vec[] = [];
   marks: Record<string, number> = {};
   move(p: Vec, mark?: string) {
@@ -25,7 +25,7 @@ class Outline {
   }
 }
 
-interface BodyOpts {
+export interface BodyOpts {
   w: number;
   h: number;
   neckW: number;
@@ -36,7 +36,7 @@ interface BodyOpts {
 }
 
 /** Front/back body. Vertex marks: neckL, shL, armL, hemL, hemR, armR, shR, neckR. Clockwise on screen. */
-function body(o: BodyOpts): Outline {
+export function body(o: BodyOpts): Outline {
   const cx = o.w / 2;
   const nl: Vec = [cx - o.neckW / 2, 0];
   const nr: Vec = [cx + o.neckW / 2, 0];
@@ -60,7 +60,7 @@ function body(o: BodyOpts): Outline {
 }
 
 /** Sleeve: cap on top, hem at the bottom. Marks: capL, top, capR, hemR, hemL. */
-function sleeve(w: number, len: number, capH: number, hemInset: number): Outline {
+export function sleeve(w: number, len: number, capH: number, hemInset: number): Outline {
   return new Outline()
     .move([0, capH], 'capL')
     .curve([w * 0.12, capH * 0.35], [w * 0.3, 0], [w / 2, 0], 'top')
@@ -69,11 +69,11 @@ function sleeve(w: number, len: number, capH: number, hemInset: number): Outline
     .line([hemInset, len], 'hemL');
 }
 
-function rect(w: number, h: number): Outline {
+export function rect(w: number, h: number): Outline {
   return new Outline().move([0, 0], 'tl').line([w, 0], 'tr').line([w, h], 'br').line([0, h], 'bl');
 }
 
-function normalise(o: Outline): { pts: Vec[]; marks: Record<string, number> } {
+export function normalise(o: Outline): { pts: Vec[]; marks: Record<string, number> } {
   // Translate to bbox origin and force clockwise winding so seam transforms are proper rotations.
   const b = bbox(o.pts);
   let pts = o.pts.map(([x, y]) => [x - b.x, y - b.y] as Vec);
@@ -86,7 +86,14 @@ function normalise(o: Outline): { pts: Vec[]; marks: Record<string, number> } {
   return { pts, marks };
 }
 
-const EN = (s: string) => ({ en: s });
+export const EN = (s: string) => ({ en: s });
+
+/** Index of a named vertex (throws on a typo, so a bad seam table fails loudly). */
+export function mark(o: { marks: Record<string, number> }, k: string): number {
+  const i = o.marks[k];
+  if (i === undefined) throw new Error(`Missing mark ${k}`);
+  return i;
+}
 
 export function createDevTee(): GarmentModel {
   const W = 530;

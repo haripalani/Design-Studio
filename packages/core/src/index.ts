@@ -9,3 +9,5 @@ export * from './canonical';
 export * from './api';
 export * from './renderPage';
 export * from './merge';
+export * from './devHoodie';
+export * from './garments';

@@ -2,3 +2,4 @@ export * from './garmentMesh';
 export * from './procedural';
 export * from './studio';
 export * from './pathtrace';
+export * from './realModel';
